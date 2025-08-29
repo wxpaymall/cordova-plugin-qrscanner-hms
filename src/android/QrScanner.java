@@ -29,7 +29,7 @@ public class QrScanner extends CordovaPlugin {
     // Android 13+ 起不再需要 READ_EXTERNAL_STORAGE。扫码仅需相机权限。
     // 动态返回需要的权限，避免因不同系统版本导致的拒绝。
     private String[] getRequiredPermissions() {
-        return getRequiredPermissions(false);
+        return getRequiredPermissions(true);
     }
 
     // 当需要直接读取媒体库（不走系统选择器）时，将 needDirectGalleryRead 置为 true
