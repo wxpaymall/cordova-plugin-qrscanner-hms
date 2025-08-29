@@ -25,11 +25,11 @@ public class QrScanner extends CordovaPlugin {
     private final int PERMISSION_REQUEST_CODE = 2017; // 用于检查权限
     private final int REQUEST_CODE_SCAN = 2018; // 用于接收扫码结果
     private final int SCAN_RESULT_OK = -1;
-    private final int PERMISSIONS_LENGTH = 2;
-
-    private String[] permissions = {
-            Manifest.permission.CAMERA,
-            Manifest.permission.READ_EXTERNAL_STORAGE};
+    // Android 13+ 起不再需要 READ_EXTERNAL_STORAGE。扫码仅需相机权限。
+    // 动态返回需要的权限，避免因不同系统版本导致的拒绝。
+    private String[] getRequiredPermissions() {
+        return new String[]{ Manifest.permission.CAMERA };
+    }
 
     private CallbackContext scanCallBack;
 
@@ -95,20 +95,27 @@ public class QrScanner extends CordovaPlugin {
         Log.d(TAG, "onRequestPermissionResult called - requestCode: " + requestCode);
         Log.d(TAG, "Permissions requested: " + Arrays.toString(permissions));
         Log.d(TAG, "Grant results: " + Arrays.toString(grantResults));
-        
-        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.length == PERMISSIONS_LENGTH && grantResults[0] == PackageManager.PERMISSION_GRANTED && grantResults[1] == PackageManager.PERMISSION_GRANTED) {
-            Log.d(TAG, "All permissions granted, proceeding with scan");
-            scan(scanCallBack);
-        } else {
-            Log.e(TAG, "Permission denied - requestCode: " + requestCode + ", expected: " + PERMISSION_REQUEST_CODE);
-            Log.e(TAG, "Grant results length: " + grantResults.length + ", expected: " + PERMISSIONS_LENGTH);
-            if (grantResults.length > 0) {
-                Log.e(TAG, "Camera permission result: " + grantResults[0] + " (0=GRANTED, -1=DENIED)");
-                if (grantResults.length > 1) {
-                    Log.e(TAG, "Storage permission result: " + grantResults[1] + " (0=GRANTED, -1=DENIED)");
+
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            boolean allGranted = true;
+            if (grantResults == null || grantResults.length == 0) {
+                allGranted = false;
+            } else {
+                for (int r : grantResults) {
+                    if (r != PackageManager.PERMISSION_GRANTED) {
+                        allGranted = false;
+                        break;
+                    }
                 }
             }
-            scanCallBack.error("permission denied");
+
+            if (allGranted) {
+                Log.d(TAG, "All required permissions granted, proceeding with scan");
+                scan(scanCallBack);
+            } else {
+                Log.e(TAG, "Required permissions denied. grantResults=" + Arrays.toString(grantResults));
+                scanCallBack.error("permission denied");
+            }
         }
     }
 
@@ -117,6 +124,7 @@ public class QrScanner extends CordovaPlugin {
      * @return
      */
     public boolean hasPermisssion() {
+        String[] permissions = getRequiredPermissions();
         Log.d(TAG, "Checking permissions: " + Arrays.toString(permissions));
         for (String p : permissions) {
             boolean hasPermission = PermissionHelper.hasPermission(this, p);
@@ -132,6 +140,7 @@ public class QrScanner extends CordovaPlugin {
 
     public void requestPermissions(int requestCode) {
         Log.d(TAG, "Requesting permissions with code: " + requestCode);
+        String[] permissions = getRequiredPermissions();
         Log.d(TAG, "Permissions to request: " + Arrays.toString(permissions));
         PermissionHelper.requestPermissions(this, requestCode, permissions);
     }
