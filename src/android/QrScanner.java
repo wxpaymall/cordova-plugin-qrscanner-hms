@@ -17,7 +17,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 
 import android.util.Log;
-import android.os.Build;
 import java.util.Arrays;
 
 
@@ -29,20 +28,9 @@ public class QrScanner extends CordovaPlugin {
     // Android 13+ 起不再需要 READ_EXTERNAL_STORAGE。扫码仅需相机权限。
     // 动态返回需要的权限，避免因不同系统版本导致的拒绝。
     private String[] getRequiredPermissions() {
-        return getRequiredPermissions(true);
+        return new String[]{ Manifest.permission.CAMERA };
     }
 
-    // 当需要直接读取媒体库（不走系统选择器）时，将 needDirectGalleryRead 置为 true
-    private String[] getRequiredPermissions(boolean needDirectGalleryRead) {
-        if (!needDirectGalleryRead) {
-            return new String[]{ Manifest.permission.CAMERA };
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            return new String[]{ Manifest.permission.CAMERA, "android.permission.READ_MEDIA_IMAGES" };
-        } else {
-            return new String[]{ Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE };
-        }
-    }
 
     private CallbackContext scanCallBack;
 
@@ -70,7 +58,7 @@ public class QrScanner extends CordovaPlugin {
         try {
             cordova.setActivityResultCallback(this);
             Log.d(TAG, "Starting HMS ScanUtil with request code: " + REQUEST_CODE_SCAN);
-            ScanUtil.startScan(cordova.getActivity(), REQUEST_CODE_SCAN, new HmsScanAnalyzerOptions.Creator().setHmsScanTypes(HmsScan.ALL_SCAN_TYPE).create());
+            ScanUtil.startScan(cordova.getActivity(), REQUEST_CODE_SCAN, new HmsScanAnalyzerOptions.Creator().setHmsScanTypes(HmsScan.QRCODE_SCAN_TYPE).create());
             Log.d(TAG, "ScanUtil.startScan called successfully");
         } catch (Exception e) {
             Log.e(TAG, "Error starting scan: " + e.getMessage(), e);
