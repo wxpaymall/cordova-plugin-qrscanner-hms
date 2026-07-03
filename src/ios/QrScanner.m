@@ -11,16 +11,16 @@
 @interface QrScanner : CDVPlugin {
   NSString* callbackId;
   QrScannerDefaultScanViewController* scanViewController;
-  UIViewController* scanParentViewController;
+  UIViewController* scanPresenterViewController;
   BOOL isFinishingScan;
 }
 
 - (void)startScan:(CDVInvokedUrlCommand*)command;
-- (void)cleanupScanView;
 - (UIViewController*)topMostViewController;
+- (void)cleanupScanViewWithCompletion:(void (^)(void))completion;
+- (void)cleanupScanView;
 - (void)scanViewControllerDidDisappear:(UIViewController*)viewController;
 - (void)cancelScanWithMessage:(NSString*)message;
-- (void)cancelScanFromButton;
 - (void)finishScanWithResult:(NSString*)result;
 @end
 
@@ -47,33 +47,19 @@
 
         callbackId = command.callbackId;
         isFinishingScan = NO;
-        scanParentViewController = [self topMostViewController];
-        if (!scanParentViewController) {
-            scanParentViewController = self.viewController;
+        scanPresenterViewController = [self topMostViewController];
+        if (!scanPresenterViewController) {
+            scanPresenterViewController = self.viewController;
         }
 
-        NSLog(@"[QrScanner] startScan, parent: %@", scanParentViewController);
+        NSLog(@"[QrScanner] startScan, presenter: %@", scanPresenterViewController);
 
         scanViewController = [[QrScannerDefaultScanViewController alloc] init];
         scanViewController.owner = self;
         scanViewController.defaultScanDelegate = self;
-        scanViewController.view.frame = scanParentViewController.view.bounds;
-        scanViewController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        scanViewController.modalPresentationStyle = UIModalPresentationFullScreen;
 
-        [scanParentViewController addChildViewController:scanViewController];
-        [scanParentViewController.view addSubview:scanViewController.view];
-        [scanViewController didMoveToParentViewController:scanParentViewController];
-        scanParentViewController.navigationController.navigationBarHidden = YES;
-
-        // HMS default scan page has a built-in back button but does not provide a cancel delegate.
-        // Intercept taps in the top-left back area so JS receives the error callback and native state is cleaned.
-        UIButton *cancelButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        cancelButton.frame = CGRectMake(0, 0, 100, 100);
-        cancelButton.autoresizingMask = UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleBottomMargin;
-        cancelButton.backgroundColor = [UIColor clearColor];
-        [cancelButton addTarget:self action:@selector(cancelScanFromButton) forControlEvents:UIControlEventTouchUpInside];
-        [scanViewController.view addSubview:cancelButton];
-        [scanViewController.view bringSubviewToFront:cancelButton];
+        [scanPresenterViewController presentViewController:scanViewController animated:YES completion:nil];
     });
 }
 
@@ -141,9 +127,14 @@
 
 - (void)cleanupScanView
 {
+    [self cleanupScanViewWithCompletion:nil];
+}
+
+- (void)cleanupScanViewWithCompletion:(void (^)(void))completion
+{
     if (![NSThread isMainThread]) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self cleanupScanView];
+            [self cleanupScanViewWithCompletion:completion];
         });
         return;
     }
@@ -151,17 +142,33 @@
     NSLog(@"[QrScanner] cleanupScanView, scanViewController: %@", scanViewController);
 
     if (!scanViewController) {
-        scanParentViewController = nil;
+        scanPresenterViewController = nil;
+        if (completion) {
+            completion();
+        }
         return;
     }
 
-    scanViewController.owner = nil;
-    scanViewController.defaultScanDelegate = nil;
-    [scanViewController willMoveToParentViewController:nil];
-    [scanViewController.view removeFromSuperview];
-    [scanViewController removeFromParentViewController];
+    QrScannerDefaultScanViewController *controller = scanViewController;
     scanViewController = nil;
-    scanParentViewController = nil;
+    scanPresenterViewController = nil;
+    controller.owner = nil;
+    controller.defaultScanDelegate = nil;
+
+    if (controller.presentingViewController) {
+        [controller dismissViewControllerAnimated:YES completion:completion];
+    } else {
+        if (controller.parentViewController) {
+            [controller willMoveToParentViewController:nil];
+            [controller.view removeFromSuperview];
+            [controller removeFromParentViewController];
+        } else {
+            [controller.view removeFromSuperview];
+        }
+        if (completion) {
+            completion();
+        }
+    }
 }
 
 - (void)finishScanWithResult:(NSString*)result
@@ -184,8 +191,9 @@
 
     NSLog(@"[QrScanner] finishScanWithResult: %@", result);
     CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:(result ?: @"")];
-    [self cleanupScanView];
-    [self.commandDelegate sendPluginResult:pluginResult callbackId:currentCallbackId];
+    [self cleanupScanViewWithCompletion:^{
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:currentCallbackId];
+    }];
 }
 
 - (void)cancelScanWithMessage:(NSString*)message
@@ -202,17 +210,12 @@
     isFinishingScan = YES;
 
     NSLog(@"[QrScanner] cancelScanWithMessage: %@", message);
-    [self cleanupScanView];
-
-    if (currentCallbackId) {
-        CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:(message ?: @"scan cancelled")];
-        [self.commandDelegate sendPluginResult:pluginResult callbackId:currentCallbackId];
-    }
-}
-
-- (void)cancelScanFromButton
-{
-    [self cancelScanWithMessage:@"scan cancelled"];
+    [self cleanupScanViewWithCompletion:^{
+        if (currentCallbackId) {
+            CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:(message ?: @"scan cancelled")];
+            [self.commandDelegate sendPluginResult:pluginResult callbackId:currentCallbackId];
+        }
+    }];
 }
 
 - (void)scanViewControllerDidDisappear:(UIViewController*)viewController
@@ -228,13 +231,8 @@
         return;
     }
 
-    if (viewController.presentedViewController) {
-        NSLog(@"[QrScanner] scanViewControllerDidDisappear ignored, presentedViewController: %@", viewController.presentedViewController);
-        return;
-    }
-
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        if (viewController == scanViewController && !isFinishingScan && !viewController.presentedViewController) {
+        if (viewController == scanViewController && !isFinishingScan) {
             NSLog(@"[QrScanner] scan view disappeared without result, treat as cancel");
             [self cancelScanWithMessage:@"scan cancelled"];
         }
