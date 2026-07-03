@@ -4,14 +4,17 @@
 #import <Cordova/CDVPluginResult.h>
 #import <Cordova/CDVAppDelegate.h>
 #import <ScanKitFrameWork/ScanKitFrameWork.h>
+#import <UIKit/UIKit.h>
 
 @interface QrScanner : CDVPlugin {
   NSString* callbackId;
   HmsDefaultScanViewController* scanViewController;
+  UIViewController* scanParentViewController;
 }
 
 - (void)startScan:(CDVInvokedUrlCommand*)command;
 - (void)cleanupScanView;
+- (UIViewController*)topMostViewController;
 @end
 
 @implementation QrScanner
@@ -22,16 +25,83 @@
         [self cleanupScanView];
 
         callbackId = command.callbackId;
+        scanParentViewController = [self topMostViewController];
+        if (!scanParentViewController) {
+            scanParentViewController = self.viewController;
+        }
+
         scanViewController = [[HmsDefaultScanViewController alloc] init];
         scanViewController.defaultScanDelegate = self;
-        scanViewController.view.frame = self.webView.bounds;
+        scanViewController.view.frame = scanParentViewController.view.bounds;
         scanViewController.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 
-        [self.viewController addChildViewController:scanViewController];
-        [self.webView addSubview:scanViewController.view];
-        [scanViewController didMoveToParentViewController:self.viewController];
-        self.viewController.navigationController.navigationBarHidden = YES;
+        [scanParentViewController addChildViewController:scanViewController];
+        [scanParentViewController.view addSubview:scanViewController.view];
+        [scanViewController didMoveToParentViewController:scanParentViewController];
+        scanParentViewController.navigationController.navigationBarHidden = YES;
     });
+}
+
+- (UIViewController*)topMostViewController
+{
+    UIWindow *keyWindow = nil;
+
+    if (@available(iOS 13.0, *)) {
+        NSSet<UIScene *> *connectedScenes = [UIApplication sharedApplication].connectedScenes;
+        for (UIScene *scene in connectedScenes) {
+            if (scene.activationState != UISceneActivationStateForegroundActive || ![scene isKindOfClass:[UIWindowScene class]]) {
+                continue;
+            }
+
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            for (UIWindow *window in windowScene.windows) {
+                if (window.isKeyWindow) {
+                    keyWindow = window;
+                    break;
+                }
+            }
+
+            if (keyWindow) {
+                break;
+            }
+        }
+    }
+
+    if (!keyWindow) {
+        keyWindow = [UIApplication sharedApplication].keyWindow;
+    }
+
+    UIViewController *topViewController = keyWindow.rootViewController ? keyWindow.rootViewController : self.viewController;
+    BOOL foundNext = YES;
+    while (foundNext) {
+        foundNext = NO;
+
+        if (topViewController.presentedViewController) {
+            topViewController = topViewController.presentedViewController;
+            foundNext = YES;
+            continue;
+        }
+
+        if ([topViewController isKindOfClass:[UINavigationController class]]) {
+            UIViewController *visibleViewController = ((UINavigationController *)topViewController).visibleViewController;
+            if (visibleViewController && visibleViewController != topViewController) {
+                topViewController = visibleViewController;
+                foundNext = YES;
+                continue;
+            }
+        }
+
+        if ([topViewController isKindOfClass:[UITabBarController class]]) {
+            UIViewController *selectedViewController = ((UITabBarController *)topViewController).selectedViewController;
+            if (selectedViewController && selectedViewController != topViewController) {
+                topViewController = selectedViewController;
+                foundNext = YES;
+                continue;
+            }
+        }
+    }
+
+    return topViewController;
 }
 
 - (void)cleanupScanView
@@ -44,6 +114,7 @@
     }
 
     if (!scanViewController) {
+        scanParentViewController = nil;
         return;
     }
 
@@ -52,6 +123,7 @@
     [scanViewController.view removeFromSuperview];
     [scanViewController removeFromParentViewController];
     scanViewController = nil;
+    scanParentViewController = nil;
 }
 
 - (void)defaultScanDelegateForDicResult:(NSDictionary *)resultDic{
